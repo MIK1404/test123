@@ -60,100 +60,98 @@ jobs:
             
             console.log('=== Terraform Plan Post Processor ===');
             const cwd = process.cwd();
-            console.log(`Repo root (working dir): ${cwd}`);
+            console.log(`Current working directory: ${cwd}`);
             
-            // Files are created in test123/abc due to working-directory setting
-            // But github-script runs from repo root, so we need full paths
+            // Files are created in test123/abc
             const planPath = path.join(cwd, 'test123', 'abc', 'tfplan');
             const logPath = path.join(cwd, 'test123', 'abc', 'plan.log');
             
-            console.log(`Looking for plan at: ${planPath}`);
-            console.log(`Looking for log at: ${logPath}`);
+            console.log(`Plan file path: ${planPath}`);
+            console.log(`Log file path: ${logPath}`);
             
-            // List what's in test123/abc
+            // Check if directory exists
+            const abcDir = path.join(cwd, 'test123', 'abc');
+            console.log(`Checking directory: ${abcDir}`);
+            
+            let files = [];
             try {
-              const abcDir = path.join(cwd, 'test123', 'abc');
-              const files = fs.readdirSync(abcDir);
+              files = fs.readdirSync(abcDir);
               console.log(`Files in test123/abc: ${files.join(', ')}`);
             } catch (e) {
-              console.log(`Could not list test123/abc: ${e.message}`);
+              console.log(`⚠️ Could not list test123/abc: ${e.message}`);
             }
             
             const planExists = fs.existsSync(planPath);
+            const logExists = fs.existsSync(logPath);
             console.log(`Plan file exists: ${planExists}`);
+            console.log(`Log file exists: ${logExists}`);
             
             let logContent = '';
-            if (fs.existsSync(logPath)) {
-              logContent = fs.readFileSync(logPath, 'utf8');
-              console.log(`Log file size: ${logContent.length} bytes`);
-            } else {
-              logContent = 'No log file found';
+            try {
+              if (logExists) {
+                logContent = fs.readFileSync(logPath, 'utf8');
+                console.log(`Log file size: ${logContent.length} bytes`);
+              }
+            } catch (e) {
+              console.log(`Could not read log: ${e.message}`);
             }
             
             const jobUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
-            let body = '';
             
-            // Determine status
+            // Build the comment body
+            let body = '';
             if (!planExists) {
-              body = `## 🔴 Terraform Plan Failed
-
-[View full logs →](${jobUrl})
-
-Plan file was not created. This usually means terraform init, validate, or plan failed.
-
-**Last 20 lines of log:**
-\`\`\`
-${logContent.split('\n').slice(-20).join('\n') || 'No log output'}
-\`\`\`
-
-**Common causes:**
-- Missing Azure credentials (set AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID secrets)
-- Terraform syntax errors in your .tf files
-- Missing terraform.tfvars file or invalid values`;
+              body = `## 🔴 Terraform Plan Failed\n\n`;
+              body += `[View full logs →](${jobUrl})\n\n`;
+              body += `Plan file was not generated. This means terraform init, validate, or plan encountered errors.\n\n`;
+              body += `**Error Output:**\n\`\`\`\n`;
+              body += logContent || 'No error log available';
+              body += `\n\`\`\`\n\n`;
+              body += `**Next Steps:**\n`;
+              body += `1. Check the GitHub Actions logs above\n`;
+              body += `2. If Azure Login failed: Configure GitHub Secrets\n`;
+              body += `   - AZURE_CLIENT_ID\n`;
+              body += `   - AZURE_TENANT_ID\n`;
+              body += `   - AZURE_SUBSCRIPTION_ID\n`;
+              body += `3. If Terraform errors: Fix syntax in .tf files`;
             } else {
+              body = `## ✅ Terraform Plan Succeeded\n\n`;
+              body += `[View full logs →](${jobUrl})\n\n`;
               try {
                 const planContent = fs.readFileSync(planPath, 'utf8');
-                body = `## ✅ Terraform Plan Succeeded
-
-<details>
-<summary>📄 Full Plan Output</summary>
-
-\\\`\\\`\\\`
-${planContent}
-\\\`\\\`\\\`
-
-</details>`;
-              } catch (err) {
-                body = `## ✅ Plan file created but could not read content`;
+                body += `<details><summary>📄 Plan Output (${planContent.length} bytes)</summary>\n\n`;
+                body += `\`\`\`\n${planContent}\n\`\`\`\n`;
+                body += `</details>`;
+              } catch (e) {
+                body += `⚠️ Plan file exists but could not be read: ${e.message}`;
               }
             }
             
-            console.log(`Posting comment with length: ${body.length}`);
-            console.log(`Context issue number: ${context.issue.number}`);
-            console.log(`Payload PR number: ${context.payload.pull_request?.number}`);
-            
-            const prNumber = context.issue.number || context.payload.pull_request?.number;
+            // Get PR number from context
+            const prNumber = context.issue.number;
+            console.log(`PR number: ${prNumber}`);
             
             if (!prNumber) {
-              console.error('ERROR: No PR number found!');
-              console.log('Full context:', JSON.stringify({issue: context.issue, pr: context.payload.pull_request}, null, 2));
-              body = `## ⚠️ Could not determine PR number`;
+              console.error('ERROR: Could not determine PR number!');
+              console.log('Context:', JSON.stringify(context, null, 2));
+              return;
             }
             
+            console.log(`Posting comment (${body.length} chars) to PR ${prNumber}...`);
+            
             try {
-              console.log(`Creating comment on PR ${prNumber}...`);
               const response = await github.rest.issues.createComment({
-                issue_number: prNumber,
                 owner: context.repo.owner,
                 repo: context.repo.repo,
+                issue_number: prNumber,
                 body: body
               });
-              console.log('✅ Comment posted! Response:', response.status);
+              console.log(`✅ Comment posted successfully! ID: ${response.data.id}`);
             } catch (error) {
-              console.error('❌ Failed to post comment');
-              console.error('Error message:', error.message);
+              console.error(`❌ Failed to post comment: ${error.message}`);
               if (error.response) {
-                console.error('Response status:', error.response.status);
-                console.error('Response data:', JSON.stringify(error.response.data, null, 2));
+                console.error(`Status: ${error.response.status}`);
+                console.error(`Response:`, error.response.data);
               }
+              throw error;
             }
