@@ -1,13 +1,13 @@
 // Post Terraform Plan results to PR with detailed error suggestions
-module.exports = async ({ github, context, core }) => {
+module.exports = async ({ github, context, outcomes }) => {
   const fs = require('fs');
   const path = require('path');
   
   // Check each step's outcome
-  const azureLoginFailed = core.getInput('azure-login-outcome') === 'failure';
-  const initFailed = core.getInput('init-outcome') === 'failure';
-  const validateFailed = core.getInput('validate-outcome') === 'failure';
-  const planFailed = core.getInput('plan-outcome') === 'failure';
+  const azureLoginFailed = outcomes.azureLogin === 'failure';
+  const initFailed = outcomes.init === 'failure';
+  const validateFailed = outcomes.validate === 'failure';
+  const planFailed = outcomes.plan === 'failure';
   
   const planPath = path.join(process.cwd(), 'abc', 'plan.txt');
   let planOutput = '';

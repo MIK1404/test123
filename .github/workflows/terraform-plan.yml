@@ -63,13 +63,10 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const script = require('${{ github.workspace }}/.github/scripts/post-terraform-plan.js');
-            await script({ 
-              github, 
-              context,
-              core: require('@actions/core')
-            });
-        env:
-          AZURE_LOGIN_OUTCOME: ${{ steps.azure-login.outcome }}
-          INIT_OUTCOME: ${{ steps.init.outcome }}
-          VALIDATE_OUTCOME: ${{ steps.validate.outcome }}
-          PLAN_OUTCOME: ${{ steps.plan.outcome }}
+            const outcomes = {
+              azureLogin: '${{ steps.azure-login.outcome }}',
+              init: '${{ steps.init.outcome }}',
+              validate: '${{ steps.validate.outcome }}',
+              plan: '${{ steps.plan.outcome }}'
+            };
+            await script({ github, context, outcomes });
