@@ -47,111 +47,35 @@ jobs:
         run: terraform validate
 
       - name: Terraform Plan
-        run: terraform plan -out=tfplan 2>&1 | tee plan.log || true
+        run: terraform plan -no-color -out=tfplan
+        continue-on-error: true
 
-      - name: Post Plan Results
+      - name: Terraform Show Plan
+        id: tf-plan
+        run: terraform show -no-color tfplan
+        continue-on-error: true
+
+      - name: Post Plan to PR
+        if: github.event_name == 'pull_request'
         uses: actions/github-script@v7
-        if: always()
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const fs = require('fs');
-            const path = require('path');
+            const outcome = '${{ steps.tf-plan.outcome }}';
+            const output = `${{ steps.tf-plan.outputs.stdout }}`;
             
-            console.log('=== Terraform Plan Post Processor ===');
-            const cwd = process.cwd();
-            console.log(`Current working directory: ${cwd}`);
-            
-            // Files are created in test123/abc
-            const planPath = path.join(cwd, 'test123', 'abc', 'tfplan');
-            const logPath = path.join(cwd, 'test123', 'abc', 'plan.log');
-            
-            console.log(`Plan file path: ${planPath}`);
-            console.log(`Log file path: ${logPath}`);
-            
-            // Check if directory exists
-            const abcDir = path.join(cwd, 'test123', 'abc');
-            console.log(`Checking directory: ${abcDir}`);
-            
-            let files = [];
-            try {
-              files = fs.readdirSync(abcDir);
-              console.log(`Files in test123/abc: ${files.join(', ')}`);
-            } catch (e) {
-              console.log(`⚠️ Could not list test123/abc: ${e.message}`);
-            }
-            
-            const planExists = fs.existsSync(planPath);
-            const logExists = fs.existsSync(logPath);
-            console.log(`Plan file exists: ${planExists}`);
-            console.log(`Log file exists: ${logExists}`);
-            
-            let logContent = '';
-            try {
-              if (logExists) {
-                logContent = fs.readFileSync(logPath, 'utf8');
-                console.log(`Log file size: ${logContent.length} bytes`);
-              }
-            } catch (e) {
-              console.log(`Could not read log: ${e.message}`);
-            }
-            
-            const jobUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
-            
-            // Build the comment body
-            let body = '';
-            if (!planExists) {
-              body = `## 🔴 Terraform Plan Failed\n\n`;
-              body += `[View full logs →](${jobUrl})\n\n`;
-              body += `Plan file was not generated. This means terraform init, validate, or plan encountered errors.\n\n`;
-              body += `**Error Output:**\n\`\`\`\n`;
-              body += logContent || 'No error log available';
-              body += `\n\`\`\`\n\n`;
-              body += `**Next Steps:**\n`;
-              body += `1. Check the GitHub Actions logs above\n`;
-              body += `2. If Azure Login failed: Configure GitHub Secrets\n`;
-              body += `   - AZURE_CLIENT_ID\n`;
-              body += `   - AZURE_TENANT_ID\n`;
-              body += `   - AZURE_SUBSCRIPTION_ID\n`;
-              body += `3. If Terraform errors: Fix syntax in .tf files`;
+            let comment = '';
+            if (outcome === 'failure') {
+              comment = `## 🔴 Terraform Plan Failed\n\nPlease check the GitHub Actions logs for details.\n\n**Common issues:**\n- Missing Azure credentials (configure AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID secrets)\n- Terraform syntax errors in .tf files\n- Invalid terraform.tfvars values`;
+            } else if (output) {
+              comment = `## ✅ Terraform Plan\n\n<details><summary>📄 View Plan Output</summary>\n\n\`\`\`\n${output}\n\`\`\`\n\n</details>`;
             } else {
-              body = `## ✅ Terraform Plan Succeeded\n\n`;
-              body += `[View full logs →](${jobUrl})\n\n`;
-              try {
-                const planContent = fs.readFileSync(planPath, 'utf8');
-                body += `<details><summary>📄 Plan Output (${planContent.length} bytes)</summary>\n\n`;
-                body += `\`\`\`\n${planContent}\n\`\`\`\n`;
-                body += `</details>`;
-              } catch (e) {
-                body += `⚠️ Plan file exists but could not be read: ${e.message}`;
-              }
+              comment = `## ⚠️ No plan output detected`;
             }
             
-            // Get PR number from context
-            const prNumber = context.issue.number;
-            console.log(`PR number: ${prNumber}`);
-            
-            if (!prNumber) {
-              console.error('ERROR: Could not determine PR number!');
-              console.log('Context:', JSON.stringify(context, null, 2));
-              return;
-            }
-            
-            console.log(`Posting comment (${body.length} chars) to PR ${prNumber}...`);
-            
-            try {
-              const response = await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: prNumber,
-                body: body
-              });
-              console.log(`✅ Comment posted successfully! ID: ${response.data.id}`);
-            } catch (error) {
-              console.error(`❌ Failed to post comment: ${error.message}`);
-              if (error.response) {
-                console.error(`Status: ${error.response.status}`);
-                console.error(`Response:`, error.response.data);
-              }
-              throw error;
-            }
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
