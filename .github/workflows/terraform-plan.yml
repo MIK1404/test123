@@ -62,19 +62,33 @@ jobs:
             const logPath = path.join(process.cwd(), 'test123', 'abc', 'plan.log');
             const planExists = fs.existsSync(planPath);
             
-            // Check if Azure Login failed
-            let azureLoginFailed = false;
+            console.log(`Current dir: ${process.cwd()}`);
+            console.log(`Looking for plan at: ${planPath}`);
+            console.log(`Plan file exists: ${planExists}`);
+            console.log(`Looking for log at: ${logPath}`);
+            
+            let logContent = '';
             try {
               if (fs.existsSync(logPath)) {
-                const log = fs.readFileSync(logPath, 'utf8');
-                if (log.includes('Not all values are present') || log.includes('Service Principal') || log.includes('auth-type')) {
-                  azureLoginFailed = true;
-                }
+                logContent = fs.readFileSync(logPath, 'utf8');
+                console.log(`Log file found, size: ${logContent.length} bytes`);
+              } else {
+                console.log('Log file not found');
               }
-            } catch (e) {}
+            } catch (e) {
+              console.log(`Error reading log: ${e.message}`);
+            }
             
-            if (azureLoginFailed) {
-              const jobUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const jobUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            
+            // Check for any errors in the log
+            const hasAzureError = logContent.includes('Not all values are present') || 
+                                 logContent.includes('Service Principal') || 
+                                 logContent.includes('auth-type') ||
+                                 logContent.includes('AZURE_CLIENT_ID');
+            const hasTerraformError = logContent.includes('Error:') || logContent.includes('error');
+            
+            if (hasAzureError || logContent.includes('azure')) {
               body = `## 🔴 Azure Authentication Failed
 
 [View full logs →](${jobUrl})
@@ -98,16 +112,9 @@ az ad sp create-for-rbac --name "terraform-github" --role Contributor
 
 Once secrets are added, re-run the pipeline.`;
             } else if (!planExists) {
-              let errorMsg = 'No error details available';
-              try {
-                if (fs.existsSync(logPath)) {
-                  const log = fs.readFileSync(logPath, 'utf8');
-                  const lines = log.split('\n').filter(l => l.includes('Error:') || l.includes('error'));
-                  errorMsg = lines.length > 0 ? lines.slice(0, 5).join('\n') : log.split('\n').slice(-15).join('\n');
-                }
-              } catch (e) {}
+              const errorLines = logContent.split('\n').filter(l => l.includes('Error:') || l.includes('error') || l.includes('failed'));
+              const errorMsg = errorLines.length > 0 ? errorLines.slice(0, 10).join('\n') : (logContent.split('\n').slice(-20).join('\n') || 'Check workflow logs for details');
               
-              const jobUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
               body = `## 🔴 Terraform Plan Failed
 
 [View full logs →](${jobUrl})
@@ -118,35 +125,16 @@ ${errorMsg}
 \`\`\`
 
 **Common Fixes:**
-- Verify \`terraform.tfvars\` has all required variables
-- Check Azure credentials are valid
-- Ensure files exist in \`test123/abc/\` directory`;
+- Verify \`terraform.tfvars\` has all required variables set
+- Check Azure credentials are configured in GitHub Secrets
+- Ensure Terraform files are in \`test123/abc/\` directory
+- Review the logs for specific error messages`;
             } else {
               // SUCCESS - Format plan output as table
               try {
                 const plan = fs.readFileSync(planPath, 'utf8');
                 
-                // Parse terraform plan to extract resources
-                const lines = plan.split('\n');
-                let resources = [];
-                
-                lines.forEach(line => {
-                  if (line.includes('will be created') || line.includes('will be updated') || line.includes('will be destroyed')) {
-                    resources.push(line.trim());
-                  }
-                });
-                
-                let tableBody = '';
-                if (resources.length > 0) {
-                  tableBody = \`| Resource Action | Details |
-|---------|---------|
-\${resources.map(r => \`| \${r.split('#')[0].trim()} | \${r} |\`).join('\n')}\`;
-                }
-                
-                body = \`## ✅ Terraform Plan Succeeded
-
-**Changes Summary:**
-\${tableBody || '📋 No changes will be made'}
+                body = `## ✅ Terraform Plan Succeeded
 
 <details>
 <summary>📄 Full Plan Output</summary>
@@ -155,17 +143,26 @@ ${errorMsg}
 \${plan}
 \\\`\\\`\\\`
 
-</details>\`;
+</details>`;
               } catch (err) {
-                body = \`## ✅ Terraform Plan Succeeded\n\n(Output formatting unavailable)\`;
+                body = `## ✅ Terraform Plan Succeeded (could not parse output)`;
               }
             }
             
-            console.log('Posting comment to PR...');
+            if (!body) {
+              body = `## ⚠️ Terraform Workflow Executed
+
+[View full logs →](${jobUrl})
+
+Unable to determine workflow status. Check logs for details.`;
+            }
+            
+            console.log(`Posting comment with body length: ${body.length}`);
             await github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
               body: body
             });
+            console.log('Comment posted successfully');
             console.log('Comment posted successfully!');
