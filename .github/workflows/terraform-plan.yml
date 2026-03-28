@@ -45,18 +45,16 @@ jobs:
         id: init
         working-directory: ./abc
         run: terraform init
-        continue-on-error: true
 
       - name: Terraform Validate
         id: validate
         working-directory: ./abc
         run: terraform validate
-        continue-on-error: true
 
       - name: Terraform Plan
         id: plan
         working-directory: ./abc
-        run: terraform plan -no-color -out=tfplan > plan.txt 2>&1 || true
+        run: terraform plan -no-color -out=tfplan > plan.txt 2>&1
 
       - name: Post Plan to PR
         if: github.event_name == 'pull_request'
