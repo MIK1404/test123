@@ -74,14 +74,54 @@ jobs:
               console.log(`Error: ${e.message}`);
             }
             
-            // Check if plan was successful
-            const isSuccess = planOutput.includes('No changes') || planOutput.includes('will be');
+            // Analyze the output for common issues
+            const hasAuthError = planOutput.includes('unauthorized') || planOutput.includes('Authentication') || planOutput.includes('error authenticating');
+            const hasInitError = planOutput.includes('error reading') || planOutput.includes('No configuration files found');
+            const hasSyntaxError = planOutput.includes('Error: ') && (planOutput.includes('on ') && planOutput.includes('line'));
+            const hasNoChanges = planOutput.includes('No changes') || planOutput.includes('no resources need to be destroyed');
+            const isSuccess = planOutput.includes('will be') || (hasNoChanges && !hasAuthError);
             
             let comment = '';
+            
             if (isSuccess) {
+              // Success message
               comment = `## ✅ Terraform Plan Succeeded\n\n<details><summary>📄 View Plan Output</summary>\n\n\`\`\`\n${planOutput}\n\`\`\`\n\n</details>`;
             } else {
-              comment = `## 🔴 Terraform Plan Output\n\n<details><summary>📄 View Output</summary>\n\n\`\`\`\n${planOutput}\n\`\`\`\n\n</details>`;
+              // Build detailed failure message with suggestions
+              comment = `## 🔴 Terraform Plan Failed\n\n[View full logs →](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})\n\nPlan execution encountered errors.\n\n`;
+              
+              comment += `<details><summary>📋 Error Output</summary>\n\n\`\`\`\n${planOutput}\n\`\`\`\n\n</details>\n\n`;
+              
+              comment += `### 🔧 Next Steps & Suggestions\n\n`;
+              
+              if (hasAuthError) {
+                comment += `**Azure Authentication Failed**\n\n`;
+                comment += `Configure GitHub Secrets with Azure credentials:\n`;
+                comment += `- Go to Settings → Secrets and variables → Actions\n`;
+                comment += `- Add these secrets:\n`;
+                comment += `  - \`AZURE_CLIENT_ID\` - Azure App Registration Client ID\n`;
+                comment += `  - \`AZURE_TENANT_ID\` - Azure Tenant ID\n`;
+                comment += `  - \`AZURE_SUBSCRIPTION_ID\` - Azure Subscription ID\n\n`;
+              }
+              
+              if (hasSyntaxError) {
+                comment += `**Terraform Syntax Error Detected**\n\n`;
+                comment += `- Review the .tf files for syntax errors\n`;
+                comment += `- Check variable definitions and resource blocks\n`;
+                comment += `- Run \`terraform validate\` locally to test\n\n`;
+              }
+              
+              if (hasInitError) {
+                comment += `**Terraform Initialization Issue**\n\n`;
+                comment += `- Ensure all .tf files are present in the directory\n`;
+                comment += `- Check terraform.tfvars file exists\n`;
+                comment += `- Verify required_providers section is correct\n\n`;
+              }
+              
+              comment += `**General Troubleshooting:**\n`;
+              comment += `- Check the Actions workflow logs above for detailed error messages\n`;
+              comment += `- Verify all required variables are set in terraform.tfvars\n`;
+              comment += `- Ensure Terraform files are syntactically correct\n`;
             }
             
             github.rest.issues.createComment({
