@@ -33,6 +33,7 @@ jobs:
           terraform_version: latest
 
       - name: Azure Login
+        id: azure-login
         uses: azure/login@v2
         continue-on-error: true
         with:
