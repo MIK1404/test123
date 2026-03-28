@@ -47,12 +47,22 @@ jobs:
         run: terraform validate
 
       - name: Terraform Plan
-        run: terraform plan -no-color -out=tfplan
+        working-directory: ./test123/abc
+        id: tf-plan
+        run: terraform plan -no-color -out=tfplan 2>&1 | tee plan.txt
         continue-on-error: true
 
-      - name: Terraform Show Plan
-        id: tf-plan
-        run: terraform show -no-color tfplan
+      - name: Read Plan Output
+        working-directory: ./test123/abc
+        id: read-plan
+        run: |
+          if [ -f plan.txt ]; then
+            echo "plan-output<<EOF" >> $GITHUB_OUTPUT
+            cat plan.txt >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+          else
+            echo "plan-output=No plan output available" >> $GITHUB_OUTPUT
+          fi
         continue-on-error: true
 
       - name: Post Plan to PR
@@ -62,15 +72,13 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const outcome = '${{ steps.tf-plan.outcome }}';
-            const output = `${{ steps.tf-plan.outputs.stdout }}`;
+            const planOutput = `${{ steps.read-plan.outputs.plan-output }}`;
             
             let comment = '';
-            if (outcome === 'failure') {
+            if (outcome === 'failure' || !planOutput) {
               comment = `## 🔴 Terraform Plan Failed\n\nPlease check the GitHub Actions logs for details.\n\n**Common issues:**\n- Missing Azure credentials (configure AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID secrets)\n- Terraform syntax errors in .tf files\n- Invalid terraform.tfvars values`;
-            } else if (output) {
-              comment = `## ✅ Terraform Plan\n\n<details><summary>📄 View Plan Output</summary>\n\n\`\`\`\n${output}\n\`\`\`\n\n</details>`;
             } else {
-              comment = `## ⚠️ No plan output detected`;
+              comment = `## ✅ Terraform Plan\n\n<details><summary>📄 View Plan Output</summary>\n\n\`\`\`\n${planOutput}\n\`\`\`\n\n</details>`;
             }
             
             github.rest.issues.createComment({
