@@ -33,6 +33,7 @@ jobs:
 
       - name: Azure Login
         uses: azure/login@v2
+        continue-on-error: true
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
@@ -57,67 +58,114 @@ jobs:
             const path = require('path');
             let body = '';
             
-            // Check if plan exists
             const planPath = path.join(process.cwd(), 'abc', 'tfplan');
             const logPath = path.join(process.cwd(), 'abc', 'plan.log');
             const planExists = fs.existsSync(planPath);
             
-            console.log('Checking paths:');
-            console.log('CWD:', process.cwd());
-            console.log('Plan path:', planPath);
-            console.log('Plan exists:', planExists);
+            // Check if Azure Login failed
+            let azureLoginFailed = false;
+            try {
+              if (fs.existsSync(logPath)) {
+                const log = fs.readFileSync(logPath, 'utf8');
+                if (log.includes('Not all values are present') || log.includes('Service Principal') || log.includes('auth-type')) {
+                  azureLoginFailed = true;
+                }
+              }
+            } catch (e) {}
             
-            if (!planExists) {
-              // Plan failed
-              let errorLog = 'No error details available';
+            if (azureLoginFailed) {
+              const jobUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+              body = `## 🔴 Azure Authentication Failed
+
+[View full logs →](${jobUrl})
+
+**Error:** Missing or invalid Azure credentials
+
+**🔧 Quick Fix - Add GitHub Secrets:**
+1. Go to **Settings → Secrets and variables → Actions**
+2. Click **New repository secret** and add these 3 values:
+
+| Secret Name | Value |
+|---------|-------|
+| \`AZURE_CLIENT_ID\` | Your Azure Client ID |
+| \`AZURE_TENANT_ID\` | Your Azure Tenant ID |
+| \`AZURE_SUBSCRIPTION_ID\` | Your Azure Subscription ID |
+
+**How to get these values:**
+\`\`\`bash
+az ad sp create-for-rbac --name "terraform-github" --role Contributor
+\`\`\`
+
+Once secrets are added, re-run the pipeline.`;
+            } else if (!planExists) {
+              let errorMsg = 'No error details available';
               try {
                 if (fs.existsSync(logPath)) {
                   const log = fs.readFileSync(logPath, 'utf8');
-                  const errors = log.split('\n').filter(l => l.includes('Error:') || l.includes('error')).slice(0, 5);
-                  errorLog = errors.length > 0 ? errors.join('\n') : log.split('\n').slice(-20).join('\n');
+                  const lines = log.split('\n').filter(l => l.includes('Error:') || l.includes('error'));
+                  errorMsg = lines.length > 0 ? lines.slice(0, 5).join('\n') : log.split('\n').slice(-15).join('\n');
                 }
-              } catch (e) {
-                errorLog = 'Could not read logs: ' + e.message;
-              }
+              } catch (e) {}
               
               const jobUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
-              
               body = `## 🔴 Terraform Plan Failed
+
 [View full logs →](${jobUrl})
 
 **Error Details:**
 \`\`\`
-${errorLog}
+${errorMsg}
 \`\`\`
 
-**🔧 Quick Fixes:**
-1. **Azure Secrets** → Add to GitHub Settings → Secrets and variables → Actions:
-   - AZURE_CLIENT_ID
-   - AZURE_TENANT_ID
-   - AZURE_SUBSCRIPTION_ID
-
-2. **terraform.tfvars** → Verify these variables exist:
-   - resource_group_name
-   - location
-   - storage_account_name`;
+**Common Fixes:**
+- Verify \`terraform.tfvars\` has all required variables
+- Check Azure credentials are valid
+- Ensure files exist in \`test123/abc/\` directory`;
             } else {
-              // Plan succeeded
+              // SUCCESS - Format plan output as table
               try {
                 const plan = fs.readFileSync(planPath, 'utf8');
-                body = `## ✅ Terraform Plan Successful\n\n\`\`\`\n${plan}\n\`\`\``;
+                
+                // Parse terraform plan to extract resources
+                const lines = plan.split('\n');
+                let resources = [];
+                
+                lines.forEach(line => {
+                  if (line.includes('will be created') || line.includes('will be updated') || line.includes('will be destroyed')) {
+                    resources.push(line.trim());
+                  }
+                });
+                
+                let tableBody = '';
+                if (resources.length > 0) {
+                  tableBody = \`| Resource Action | Details |
+|---------|---------|
+\${resources.map(r => \`| \${r.split('#')[0].trim()} | \${r} |\`).join('\n')}\`;
+                }
+                
+                body = \`## ✅ Terraform Plan Succeeded
+
+**Changes Summary:**
+\${tableBody || '📋 No changes will be made'}
+
+<details>
+<summary>📄 Full Plan Output</summary>
+
+\\\`\\\`\\\`
+\${plan}
+\\\`\\\`\\\`
+
+</details>\`;
               } catch (err) {
-                body = `## ✅ Terraform Plan Successful\n\n(Output not available)`;
+                body = \`## ✅ Terraform Plan Succeeded\n\n(Output formatting unavailable)\`;
               }
             }
             
-            console.log('Posting comment with body:');
-            console.log(body.substring(0, 200));
-            
+            console.log('Posting comment to PR...');
             await github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
               body: body
             });
-            
             console.log('Comment posted successfully!');
