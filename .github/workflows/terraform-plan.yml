@@ -58,8 +58,8 @@ jobs:
             const path = require('path');
             let body = '';
             
-            const planPath = path.join(process.cwd(), 'abc', 'tfplan');
-            const logPath = path.join(process.cwd(), 'abc', 'plan.log');
+            const planPath = path.join(process.cwd(), 'test123', 'abc', 'tfplan');
+            const logPath = path.join(process.cwd(), 'test123', 'abc', 'plan.log');
             const planExists = fs.existsSync(planPath);
             
             // Check if Azure Login failed
