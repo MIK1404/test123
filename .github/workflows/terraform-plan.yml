@@ -41,13 +41,15 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Terraform Init
+        working-directory: ./abc
         run: terraform init
 
       - name: Terraform Validate
+        working-directory: ./abc
         run: terraform validate
 
       - name: Terraform Plan
-        working-directory: ./test123/abc
+        working-directory: ./abc
         id: tf-plan
         run: terraform plan -no-color -out=tfplan > plan.txt 2>&1 || true
 
@@ -60,7 +62,7 @@ jobs:
             const fs = require('fs');
             const path = require('path');
             
-            const planPath = path.join(process.cwd(), 'test123', 'abc', 'plan.txt');
+            const planPath = path.join(process.cwd(), 'abc', 'plan.txt');
             console.log(`Reading from: ${planPath}`);
             
             let planOutput = 'No output available';
