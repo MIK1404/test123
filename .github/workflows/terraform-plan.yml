@@ -4,6 +4,7 @@ on:
   pull_request:
     branches:
       - main
+      - test1
     paths:
       - 'test123/**'
       - '.github/workflows/terraform-plan.yml'
