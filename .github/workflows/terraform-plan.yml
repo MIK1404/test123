@@ -158,11 +158,27 @@ Unable to determine workflow status. Check logs for details.`;
             }
             
             console.log(`Posting comment with body length: ${body.length}`);
-            await github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: body
-            });
-            console.log('Comment posted successfully');
-            console.log('Comment posted successfully!');
+            console.log(`PR Number: ${context.issue.number || context.payload.pull_request.number}`);
+            
+            const prNumber = context.issue.number || context.payload.pull_request.number;
+            if (!prNumber) {
+              console.error('ERROR: Could not determine PR number');
+              console.log('Context:', JSON.stringify(context, null, 2));
+              return;
+            }
+            
+            try {
+              const response = await github.rest.issues.createComment({
+                issue_number: prNumber,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: body
+              });
+              console.log('Comment posted successfully!');
+              console.log('Response:', response.status);
+            } catch (error) {
+              console.error('Failed to post comment:');
+              console.error('Error:', error.message);
+              console.error('Status:', error.status);
+              throw error;
+            }
