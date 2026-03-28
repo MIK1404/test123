@@ -71,3 +71,57 @@ jobs:
               repo: context.repo.repo,
               body: body
             });
+
+      - name: Handle Terraform Errors
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const jobUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            
+            let errorSuggestion = '';
+            
+            // Common Terraform errors and fixes
+            const errorPatterns = [
+              {
+                pattern: /az login/i,
+                message: '❌ **Azure Authentication Failed**',
+                suggestion: 'GitHub Secrets are missing or invalid. Add these to Settings → Secrets and variables → Actions:\n- `AZURE_CLIENT_ID`\n- `AZURE_TENANT_ID`\n- `AZURE_SUBSCRIPTION_ID`'
+              },
+              {
+                pattern: /resource_group_name|location|storage_account_name/i,
+                message: '❌ **Missing Required Variables**',
+                suggestion: 'Add these variables to `terraform.tfvars`:\n```\nresource_group_name = "your-rg"\nlocation = "East US"\nstorage_account_name = "yourstorageacct"\n```'
+              },
+              {
+                pattern: /provider.*azurerm/i,
+                message: '❌ **Azure Provider Error**',
+                suggestion: 'Ensure Azure credentials are properly configured in GitHub Secrets'
+              },
+              {
+                pattern: /no such file or directory/i,
+                message: '❌ **File Not Found**',
+                suggestion: 'Check that all Terraform files exist in the correct directory: `test123/abc/`'
+              }
+            ];
+            
+            const body = `## 🔴 Pipeline Failed
+            
+[View full logs →](${jobUrl})
+
+**Possible Issues & Fixes:**
+${errorPatterns.map(ep => `- ${ep.message}\n  ${ep.suggestion}`).join('\n')}
+
+Common solutions:
+1. Check GitHub Secrets are set correctly
+2. Verify all Terraform files are in place
+3. Review variable definitions in \`terraform.tfvars\`
+4. Check Azure permissions and subscription access`;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
