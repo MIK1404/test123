@@ -20,7 +20,7 @@ jobs:
     
     defaults:
       run:
-        working-directory: ./abc
+        working-directory: ./test123/abc
 
     steps:
       - name: Checkout code
