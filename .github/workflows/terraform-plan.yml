@@ -60,21 +60,23 @@ jobs:
             
             console.log('=== Terraform Plan Post Processor ===');
             const cwd = process.cwd();
-            console.log(`Working directory: ${cwd}`);
+            console.log(`Repo root (working dir): ${cwd}`);
             
-            // Use relative paths from current directory
-            const planPath = './tfplan';
-            const logPath = './plan.log';
+            // Files are created in test123/abc due to working-directory setting
+            // But github-script runs from repo root, so we need full paths
+            const planPath = path.join(cwd, 'test123', 'abc', 'tfplan');
+            const logPath = path.join(cwd, 'test123', 'abc', 'plan.log');
             
-            console.log(`Checking for: ${planPath}`);
-            console.log(`Checking for: ${logPath}`);
+            console.log(`Looking for plan at: ${planPath}`);
+            console.log(`Looking for log at: ${logPath}`);
             
-            // List what's in current directory
+            // List what's in test123/abc
             try {
-              const files = fs.readdirSync('.');
-              console.log('Files in current directory:', files.join(', '));
+              const abcDir = path.join(cwd, 'test123', 'abc');
+              const files = fs.readdirSync(abcDir);
+              console.log(`Files in test123/abc: ${files.join(', ')}`);
             } catch (e) {
-              console.log('Could not list directory');
+              console.log(`Could not list test123/abc: ${e.message}`);
             }
             
             const planExists = fs.existsSync(planPath);
@@ -101,7 +103,7 @@ Plan file was not created. This usually means terraform init, validate, or plan 
 
 **Last 20 lines of log:**
 \`\`\`
-${logContent.split('\\n').slice(-20).join('\\n') || 'No log output'}
+${logContent.split('\n').slice(-20).join('\n') || 'No log output'}
 \`\`\`
 
 **Common causes:**
