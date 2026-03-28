@@ -49,8 +49,7 @@ jobs:
       - name: Terraform Plan
         working-directory: ./test123/abc
         id: tf-plan
-        run: terraform plan -no-color -out=tfplan 2>&1 | tee plan.txt
-        continue-on-error: true
+        run: terraform plan -no-color -out=tfplan > plan.txt 2>&1 || true
 
       - name: Post Plan to PR
         if: github.event_name == 'pull_request'
@@ -62,20 +61,25 @@ jobs:
             const path = require('path');
             
             const planPath = path.join(process.cwd(), 'test123', 'abc', 'plan.txt');
-            console.log(`Reading plan from: ${planPath}`);
+            console.log(`Reading from: ${planPath}`);
             
-            let planOutput = '';
+            let planOutput = 'No output available';
             try {
-              planOutput = fs.readFileSync(planPath, 'utf8');
+              if (fs.existsSync(planPath)) {
+                planOutput = fs.readFileSync(planPath, 'utf8');
+              }
             } catch (e) {
-              console.log(`Could not read plan file: ${e.message}`);
+              console.log(`Error: ${e.message}`);
             }
             
+            // Check if plan was successful
+            const isSuccess = planOutput.includes('No changes') || planOutput.includes('will be');
+            
             let comment = '';
-            if (!planOutput || planOutput.trim() === '') {
-              comment = `## 🔴 Terraform Plan Failed\n\nPlease check the GitHub Actions logs for details.\n\n**Common issues:**\n- Missing Azure credentials (configure AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID secrets)\n- Terraform syntax errors in .tf files\n- Invalid terraform.tfvars values`;
+            if (isSuccess) {
+              comment = `## ✅ Terraform Plan Succeeded\n\n<details><summary>📄 View Plan Output</summary>\n\n\`\`\`\n${planOutput}\n\`\`\`\n\n</details>`;
             } else {
-              comment = `## ✅ Terraform Plan\n\n<details><summary>📄 View Plan Output</summary>\n\n\`\`\`\n${planOutput}\n\`\`\`\n\n</details>`;
+              comment = `## 🔴 Terraform Plan Output\n\n<details><summary>📄 View Output</summary>\n\n\`\`\`\n${planOutput}\n\`\`\`\n\n</details>`;
             }
             
             github.rest.issues.createComment({
