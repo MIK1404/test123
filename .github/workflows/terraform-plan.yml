@@ -43,8 +43,15 @@ jobs:
         run: terraform validate
 
       - name: Terraform Plan
-        run: terraform plan -out=tfplan
+        run: terraform plan -out=tfplan 2>&1 | tee plan.log
         continue-on-error: true
+
+      - name: Check Terraform Errors
+        run: |
+          if grep -q "Error:" plan.log || [ ! -f tfplan ]; then
+            echo "Terraform plan failed!"
+            exit 1
+          fi
 
       - name: Comment PR with Plan
         uses: actions/github-script@v7
@@ -78,46 +85,39 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
+            const fs = require('fs');
             const jobUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
             
-            let errorSuggestion = '';
+            let errorLog = '';
+            try {
+              errorLog = fs.readFileSync('plan.log', 'utf8').split('\n').filter(l => l.includes('Error')).slice(0, 10).join('\n');
+            } catch (e) {
+              errorLog = 'Could not read error logs';
+            }
             
-            // Common Terraform errors and fixes
-            const errorPatterns = [
-              {
-                pattern: /az login/i,
-                message: '❌ **Azure Authentication Failed**',
-                suggestion: 'GitHub Secrets are missing or invalid. Add these to Settings → Secrets and variables → Actions:\n- `AZURE_CLIENT_ID`\n- `AZURE_TENANT_ID`\n- `AZURE_SUBSCRIPTION_ID`'
-              },
-              {
-                pattern: /resource_group_name|location|storage_account_name/i,
-                message: '❌ **Missing Required Variables**',
-                suggestion: 'Add these variables to `terraform.tfvars`:\n```\nresource_group_name = "your-rg"\nlocation = "East US"\nstorage_account_name = "yourstorageacct"\n```'
-              },
-              {
-                pattern: /provider.*azurerm/i,
-                message: '❌ **Azure Provider Error**',
-                suggestion: 'Ensure Azure credentials are properly configured in GitHub Secrets'
-              },
-              {
-                pattern: /no such file or directory/i,
-                message: '❌ **File Not Found**',
-                suggestion: 'Check that all Terraform files exist in the correct directory: `test123/abc/`'
-              }
-            ];
-            
-            const body = `## 🔴 Pipeline Failed
+            const body = `## 🔴 Pipeline Failed - Terraform Error Detected
             
 [View full logs →](${jobUrl})
 
-**Possible Issues & Fixes:**
-${errorPatterns.map(ep => `- ${ep.message}\n  ${ep.suggestion}`).join('\n')}
+**Error Details:**
+\`\`\`
+${errorLog || 'See logs for details'}
+\`\`\`
 
-Common solutions:
-1. Check GitHub Secrets are set correctly
-2. Verify all Terraform files are in place
-3. Review variable definitions in \`terraform.tfvars\`
-4. Check Azure permissions and subscription access`;
+**Common Fixes:**
+1. ✅ **Azure Secrets** - Add to GitHub Settings → Secrets:
+   - \`AZURE_CLIENT_ID\`
+   - \`AZURE_TENANT_ID\`  
+   - \`AZURE_SUBSCRIPTION_ID\`
+
+2. ✅ **Variables** - Check \`terraform.tfvars\`:
+   - \`resource_group_name\`
+   - \`location\`
+   - \`storage_account_name\`
+
+3. ✅ **Files** - Verify all files exist in \`test123/abc/\`
+
+4. ✅ **Azure Access** - Ensure service principal has required permissions`;
             
             github.rest.issues.createComment({
               issue_number: context.issue.number,
