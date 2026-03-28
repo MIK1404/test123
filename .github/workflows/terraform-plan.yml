@@ -42,16 +42,20 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Terraform Init
+        id: init
         working-directory: ./abc
         run: terraform init
+        continue-on-error: true
 
       - name: Terraform Validate
+        id: validate
         working-directory: ./abc
         run: terraform validate
+        continue-on-error: true
 
       - name: Terraform Plan
+        id: plan
         working-directory: ./abc
-        id: tf-plan
         run: terraform plan -no-color -out=tfplan > plan.txt 2>&1 || true
 
       - name: Post Plan to PR
@@ -63,24 +67,24 @@ jobs:
             const fs = require('fs');
             const path = require('path');
             
-            const planPath = path.join(process.cwd(), 'abc', 'plan.txt');
-            console.log(`Reading from: ${planPath}`);
+            // Check each step's outcome
+            const azureLoginFailed = '${{ steps.azure-login.outcome }}' === 'failure';
+            const initFailed = '${{ steps.init.outcome }}' === 'failure';
+            const validateFailed = '${{ steps.validate.outcome }}' === 'failure';
+            const planFailed = '${{ steps.plan.outcome }}' === 'failure';
             
-            let planOutput = 'No output available';
+            const planPath = path.join(process.cwd(), 'abc', 'plan.txt');
+            let planOutput = '';
             try {
               if (fs.existsSync(planPath)) {
                 planOutput = fs.readFileSync(planPath, 'utf8');
               }
             } catch (e) {
-              console.log(`Error: ${e.message}`);
+              console.log(`Error reading plan: ${e.message}`);
             }
             
-            // Analyze the output for common issues
-            const hasAuthError = planOutput.includes('unauthorized') || planOutput.includes('Authentication') || planOutput.includes('error authenticating');
-            const hasInitError = planOutput.includes('error reading') || planOutput.includes('No configuration files found');
-            const hasSyntaxError = planOutput.includes('Error: ') && (planOutput.includes('on ') && planOutput.includes('line'));
             const hasNoChanges = planOutput.includes('No changes') || planOutput.includes('no resources need to be destroyed');
-            const isSuccess = planOutput.includes('will be') || (hasNoChanges && !hasAuthError);
+            const isSuccess = !azureLoginFailed && !initFailed && !validateFailed && !planFailed && (planOutput.includes('will be') || hasNoChanges);
             
             let comment = '';
             
@@ -88,41 +92,69 @@ jobs:
               // Success message
               comment = `## ✅ Terraform Plan Succeeded\n\n<details><summary>📄 View Plan Output</summary>\n\n\`\`\`\n${planOutput}\n\`\`\`\n\n</details>`;
             } else {
-              // Build detailed failure message with suggestions
-              comment = `## 🔴 Terraform Plan Failed\n\n[View full logs →](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})\n\nPlan execution encountered errors.\n\n`;
+              // Failure - show each step that failed
+              comment = `## 🔴 Terraform Execution Failed\n\n[View full logs →](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})\n\n`;
               
-              comment += `<details><summary>📋 Error Output</summary>\n\n\`\`\`\n${planOutput}\n\`\`\`\n\n</details>\n\n`;
-              
-              comment += `### 🔧 Next Steps & Suggestions\n\n`;
-              
-              if (hasAuthError) {
-                comment += `**Azure Authentication Failed**\n\n`;
-                comment += `Configure GitHub Secrets with Azure credentials:\n`;
-                comment += `- Go to Settings → Secrets and variables → Actions\n`;
-                comment += `- Add these secrets:\n`;
-                comment += `  - \`AZURE_CLIENT_ID\` - Azure App Registration Client ID\n`;
-                comment += `  - \`AZURE_TENANT_ID\` - Azure Tenant ID\n`;
-                comment += `  - \`AZURE_SUBSCRIPTION_ID\` - Azure Subscription ID\n\n`;
+              // Azure Login failure
+              if (azureLoginFailed) {
+                comment += `### ❌ Step 1: Azure Login Failed\n\n`;
+                comment += `**Issue:** GitHub Secrets not configured for Azure authentication.\n\n`;
+                comment += `**Solution:**\n`;
+                comment += `1. Get Azure Credentials:\n`;
+                comment += `   \`\`\`bash\n`;
+                comment += `   az ad sp create-for-rbac --name "terraform-github" --role Contributor\n`;
+                comment += `   \`\`\`\n`;
+                comment += `2. Add GitHub Secrets (Settings → Secrets and variables → Actions):\n`;
+                comment += `   - \`AZURE_CLIENT_ID\` = clientId from command output\n`;
+                comment += `   - \`AZURE_TENANT_ID\` = tenant from command output\n`;
+                comment += `   - \`AZURE_SUBSCRIPTION_ID\` = your subscription ID (\`az account show --query id\`)\n\n`;
               }
               
-              if (hasSyntaxError) {
-                comment += `**Terraform Syntax Error Detected**\n\n`;
-                comment += `- Review the .tf files for syntax errors\n`;
-                comment += `- Check variable definitions and resource blocks\n`;
-                comment += `- Run \`terraform validate\` locally to test\n\n`;
+              // Terraform Init failure
+              if (initFailed) {
+                comment += `### ❌ Step 2: Terraform Init Failed\n\n`;
+                comment += `**Issue:** Failed to initialize Terraform in ./abc directory.\n\n`;
+                comment += `**Solution:**\n`;
+                comment += `- Verify all .tf files exist in ./abc\n`;
+                comment += `- Check provider.tf has correct \`required_providers\` block\n`;
+                comment += `- Ensure terraform.tfvars exists\n`;
+                comment += `- Run locally: \`cd abc && terraform init\`\n\n`;
               }
               
-              if (hasInitError) {
-                comment += `**Terraform Initialization Issue**\n\n`;
-                comment += `- Ensure all .tf files are present in the directory\n`;
-                comment += `- Check terraform.tfvars file exists\n`;
-                comment += `- Verify required_providers section is correct\n\n`;
+              // Terraform Validate failure
+              if (validateFailed) {
+                comment += `### ❌ Step 3: Terraform Validate Failed\n\n`;
+                comment += `**Issue:** Terraform configuration has syntax or structure errors.\n\n`;
+                comment += `**Solution:**\n`;
+                comment += `- Check for syntax errors in main.tf, variables.tf, provider.tf\n`;
+                comment += `- Ensure all variable references are correct\n`;
+                comment += `- Run locally: \`cd abc && terraform validate\`\n`;
+                comment += `- Look for missing required variables or incorrect types\n\n`;
               }
               
-              comment += `**General Troubleshooting:**\n`;
-              comment += `- Check the Actions workflow logs above for detailed error messages\n`;
-              comment += `- Verify all required variables are set in terraform.tfvars\n`;
-              comment += `- Ensure Terraform files are syntactically correct\n`;
+              // Terraform Plan failure
+              if (planFailed) {
+                comment += `### ❌ Step 4: Terraform Plan Failed\n\n`;
+                comment += `**Issue:** Terraform plan execution encountered an error.\n\n`;
+                comment += `**Error Output:**\n`;
+                comment += `\`\`\`\n${planOutput || 'Check Actions logs for details'}\n\`\`\`\n\n`;
+                comment += `**Common Causes:**\n`;
+                comment += `- Invalid resource configuration\n`;
+                comment += `- Missing or incorrect variable values in terraform.tfvars\n`;
+                comment += `- Azure resource quota exceeded\n`;
+                comment += `- Invalid resource names or properties\n\n`;
+              }
+              
+              comment += `### 📋 Troubleshooting\n\n`;
+              comment += `1. Check the [full workflow logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for detailed error messages\n`;
+              comment += `2. Test locally:\n`;
+              comment += `   \`\`\`bash\n`;
+              comment += `   cd abc\n`;
+              comment += `   terraform init\n`;
+              comment += `   terraform validate\n`;
+              comment += `   terraform plan\n`;
+              comment += `   \`\`\`\n`;
+              comment += `3. Fix the error and push again\n`;
             }
             
             github.rest.issues.createComment({
