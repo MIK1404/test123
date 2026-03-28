@@ -45,15 +45,6 @@ jobs:
       - name: Terraform Plan
         run: terraform plan -out=tfplan 2>&1 | tee plan.log || true
 
-      - name: Check for Terraform Errors
-        id: tf-check
-        run: |
-          if [ ! -f tfplan ]; then
-            echo "plan_failed=true" >> $GITHUB_OUTPUT
-          else
-            echo "plan_failed=false" >> $GITHUB_OUTPUT
-          fi
-
       - name: Post Plan Results
         uses: actions/github-script@v7
         if: always()
@@ -61,24 +52,35 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const fs = require('fs');
+            const path = require('path');
             let body = '';
-            const planFailed = ${{ steps.tf-check.outputs.plan_failed }};
             
-            if (planFailed === 'true' || !fs.existsSync('tfplan')) {
-              // Read error log
+            // Check if plan exists
+            const planPath = path.join(process.cwd(), 'abc', 'tfplan');
+            const logPath = path.join(process.cwd(), 'abc', 'plan.log');
+            const planExists = fs.existsSync(planPath);
+            
+            console.log('Checking paths:');
+            console.log('CWD:', process.cwd());
+            console.log('Plan path:', planPath);
+            console.log('Plan exists:', planExists);
+            
+            if (!planExists) {
+              // Plan failed
               let errorLog = 'No error details available';
               try {
-                const log = fs.readFileSync('plan.log', 'utf8');
-                const errors = log.split('\n').filter(l => l.includes('Error:') || l.includes('error')).slice(0, 5);
-                errorLog = errors.length > 0 ? errors.join('\n') : log.split('\n').slice(-20).join('\n');
+                if (fs.existsSync(logPath)) {
+                  const log = fs.readFileSync(logPath, 'utf8');
+                  const errors = log.split('\n').filter(l => l.includes('Error:') || l.includes('error')).slice(0, 5);
+                  errorLog = errors.length > 0 ? errors.join('\n') : log.split('\n').slice(-20).join('\n');
+                }
               } catch (e) {
-                errorLog = e.message;
+                errorLog = 'Could not read logs: ' + e.message;
               }
               
               const jobUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
               
               body = `## 🔴 Terraform Plan Failed
-
 [View full logs →](${jobUrl})
 
 **Error Details:**
@@ -88,34 +90,32 @@ ${errorLog}
 
 **🔧 Quick Fixes:**
 1. **Azure Secrets** → Add to GitHub Settings → Secrets and variables → Actions:
-   - \`AZURE_CLIENT_ID\`
-   - \`AZURE_TENANT_ID\`
-   - \`AZURE_SUBSCRIPTION_ID\`
+   - AZURE_CLIENT_ID
+   - AZURE_TENANT_ID
+   - AZURE_SUBSCRIPTION_ID
 
-2. **terraform.tfvars** → Verify these are set:
-   - \`resource_group_name\`
-   - \`location\`
-   - \`storage_account_name\`
-
-3. **Files** → Check files exist in \`test123/abc/\`:
-   - \`main.tf\`
-   - \`variables.tf\`
-   - \`provider.tf\`
-   - \`terraform.tfvars\`
-
-4. **Azure Access** → Verify service principal has Contributor role`;
+2. **terraform.tfvars** → Verify these variables exist:
+   - resource_group_name
+   - location
+   - storage_account_name`;
             } else {
+              // Plan succeeded
               try {
-                const plan = fs.readFileSync('tfplan', 'utf8');
-                body = \`## ✅ Terraform Plan Successful\n\n\\\`\\\`\\\`\n\${plan}\n\\\`\\\`\\\`\`;
+                const plan = fs.readFileSync(planPath, 'utf8');
+                body = `## ✅ Terraform Plan Successful\n\n\`\`\`\n${plan}\n\`\`\``;
               } catch (err) {
-                body = \`## Terraform Plan - Unable to display details\`;
+                body = `## ✅ Terraform Plan Successful\n\n(Output not available)`;
               }
             }
             
-            github.rest.issues.createComment({
+            console.log('Posting comment with body:');
+            console.log(body.substring(0, 200));
+            
+            await github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
               body: body
             });
+            
+            console.log('Comment posted successfully!');
